@@ -234,3 +234,185 @@ $ rust-objdump -S target/riscv64gc-unknown-none-elf/debug/os
 反汇编导出汇编程序:
 target/riscv64gc-unknown-none-elf/debug/os:     file format elf64-littleriscv
 -------------------------------------------------------------------
+qemu模拟器上实现内核运行与检验:主要是为了方便快捷，只需在命令行输入一行命令即可让内核跑起来
+使用软件 qemu-system-riscv64 来模拟一台 64 位 RISC-V 架构的计算机，它包含CPU 、物理内存以及若干 I/O 外设
+启动 Qemu:
+通过各章的os/Makefile文件可以查看
+$ qemu-system-riscv64 \
+    -machine virt \
+    -nographic \
+    -bios ../bootloader/rustsbi-qemu.bin \
+    -device loader,file=target/riscv64gc-unknown-none-elf/release/os.bin,addr=0x80200000
+
+//-machine virt 计算机名为virt
+//-nographic 不需要图解（图形界面），只对外输出字符流
+//-bios +加载引导程序，在与os同级的bootloader目录下（在每章分支中可以查看）
+//-device  loader属性可以在Qemu模拟器开机之前将一个宿主机上的文件载入到Qemu的物理内存的指定位置中
+           file 和 addr 属性分别可以设置待载入文件的路径以及将文件载入到的 Qemu 物理内存上的物理地址
+           示例中os.bin为内核镜像
+-------------------------------------------------------------------
+在 Qemu 开始执行任何指令之前，首先把两个文件加载到 Qemu 的物理内存中：即作把作为 bootloader 的 rustsbi-qemu.bin 加载到物理内存以物理地址 0x80000000 开头的区域上，同时把内核镜像 os.bin 加载到以物理地址 0x80200000 开头的区域上
+计算机加电之后的启动流程可以分成若干个阶段，每个阶段均由一层软件或固件负责，1.每一层软件或固件的功能是进行它应当承担的初始化工作，2.并在此之后跳转到下一层软件或固件的入口地址，也就是将计算机的控制权移交给了下一层软件或固件
+
+Qemu 模拟的启动流程则可以分为三个阶段：第一个阶段由固化在 Qemu 内的一小段汇编程序负责；第二个阶段由 bootloader 负责；第三个阶段则由内核镜像负责
+
+第一阶段:将必要的文件载入到 Qemu 物理内存之后，Qemu CPU 的程序计数器（PC, Program Counter）会被初始化为 0x1000，因此 Qemu 实际执行的第一条指令位于物理地址 0x1000 ，接下来它将执行寥寥数条指令并跳转到物理地址 0x80000000 对应的指令处并进入第二阶段
+第二阶段:将负责第二阶段的 bootloader rustsbi-qemu.bin 放在以物理地址 0x80000000 开头的物理内存中，这样就能保证 0x80000000 处正好保存 bootloader 的第一条指令,bootloader 负责对计算机进行一些初始化工作,接着跳转到下一条指令地址，入口地址可能是一个预先约定好的固定的值，也有可能是在 bootloader 运行期间才动态获取到的值
+第三阶段:一旦 CPU 开始执行内核的第一条指令，证明计算机的控制权已经被移交给我们的内核，也就达到了本节的目标
+-------------------------------------------------------------------
+![alt text](image-1.png)
+字节至少可以分成代码和数据两部分，在程序运行起来的时候它们的功能并不相同：代码部分由一条条可以被 CPU 解码并执行的指令组成，而数据部分只是被 CPU 视作可读写的内存空间。事实上我们还可以根据其功能进一步把两个部分划分为更小的单位： 段 (Section)
+
+.text 存放程序的所有汇编代码
+数据部分:
+.rodata已初始化的不可修改的全局变量，如常量
+.data已初始化的可以被修改的全局变量
+.bss 保存程序中那些未初始化的全局数据，通常由程序的加载者代为进行零初始化，即将这块区域逐字节清零
+堆存储动态分配的数据，向高地址增长
+栈不仅用作函数调用上下文的保存与恢复，每个函数作用域内的局部变量也被编译器放在它的栈帧内，向低地址增长
+-------------------------------------------------------------------
+编译流程：
+1.编译器：将每个源文件从某门高级编程语言转化为汇编语言
+2.汇编器：将上一步的每个源文件中的文本格式的指令转化为机器码（一个二进制的目标文件）.o文件
+3.链接器：将所有目标文件和其所需的外部目标文件链接在一起形成一个完整的可执行文件
+-------------------------------------------------------------------
+ # os/src/entry.asm
+     .section .text.entry
+     .globl _start
+ _start:
+     li x1, 100
+
+第3行.globl _start我们告知编译器 _start 是一个全局符号，因此可以被其他目标文件使用
+第2行表明我们希望将第2行后面的内容全部放到一个名为 .text.entry 的段中
+-------------------------------------------------------------------
+// os/src/main.rs
+#![no_std]
+#![no_main]
+
+mod lang_items;
+
+use core::arch::global_asm;
+global_asm!(include_str!("entry.asm"));
+我们通过 include_str! 宏将同目录下的汇编代码 entry.asm 转化为字符串并通过 global_asm! 宏嵌入到代码中
+-------------------------------------------------------------------
+由于链接器默认的内存布局并不能符合我们的要求，为了实现与 Qemu 正确对接，我们可以通过 链接脚本 (Linker Script) 调整链接器的行为
+内核第一条指令的地址应该位于 0x80200000 
+
+// os/.cargo/config
+ [build]
+ target = "riscv64gc-unknown-none-elf"
+
+ [target.riscv64gc-unknown-none-elf]
+ rustflags = [
+     "-Clink-arg=-Tsrc/linker.ld", "-Cforce-frame-pointers=yes"
+ ]
+
+
+
+ 链接脚本 os/src/linker.ld 如下：
+
+OUTPUT_ARCH(riscv)
+ENTRY(_start)
+BASE_ADDRESS = 0x80200000;
+
+SECTIONS
+{
+    . = BASE_ADDRESS;
+    skernel = .;
+
+    stext = .;
+    .text : {
+        *(.text.entry)
+        *(.text .text.*)
+    }
+
+    . = ALIGN(4K);
+    etext = .;
+    srodata = .;
+    .rodata : {
+        *(.rodata .rodata.*)
+        *(.srodata .srodata.*)
+    }
+
+    . = ALIGN(4K);
+    erodata = .;
+    sdata = .;
+    .data : {
+        *(.data .data.*)
+        *(.sdata .sdata.*)
+    }
+
+    . = ALIGN(4K);
+    edata = .;
+    .bss : {
+        *(.bss.stack)
+        sbss = .;
+        *(.bss .bss.*)
+        *(.sbss .sbss.*)
+    }
+
+    . = ALIGN(4K);
+    ebss = .;
+    ekernel = .;
+
+    /DISCARD/ : {
+        *(.eh_frame)
+    }
+}
+
+设置了目标平台为 riscv，设置了整个程序的入口点为之前定义的全局符号 _start
+定义了一个常量 BASE_ADDRESS 为 0x80200000 ，也就是我们之前提到内核的初始化代码被放置的地址
+后面开始体现了链接过程中对输入的目标文件的段的合并
+. 表示当前地址，也就是链接器会从它指向的位置开始往下放置从输入的目标文件中收集来的段
+我们可以对 . 进行赋值来调整接下来的段放在哪里，也可以创建一些全局符号赋值为 . 从而记录这一时刻的位置
+-------------------------------------------------------------------
+.rodata : {
+    *(.rodata)
+}
+冒号前面表示最终生成的可执行文件的一个段的名字，花括号内按照放置顺序描述将所有输入目标文件的哪些段放在这个段中
+-------------------------------------------------------------------
+$ cargo build --release
+Finished `release` profile [optimized] target(s) in 0.15s
+以 release 模式生成了内核可执行文件，它的位置在 os/target/riscv64gc.../release/os 
+
+$ file target/riscv64gc-unknown-none-elf/release/os
+target/riscv64gc-unknown-none-elf/release/os: ELF 64-bit LSB executable, UCB RISC-V, RVC, double-float ABI, version 1 (SYSV), statically linked, not stripped
+file 工具查看它的属性，可以看到它是一个运行在 64 位 RISC-V 架构计算机上的可执行文件，它是静态链接得到的
+-------------------------------------------------------------------
+手动加载内核可执行文件:
+
+我们直接将内核可执行文件 os 提交给 Qemu ，而 Qemu 会将整个可执行文件不加处理的加载到 Qemu 内存的 0x80200000 处，由于内核可执行文件的开头是一段元数据，这会导致 Qemu 内存 0x80200000 处无法找到内核第一条指令，也就意味着 RustSBI 无法正常将计算机控制权转交给内核
+$ rust-objcopy --strip-all target/riscv64gc-unknown-none-elf/release/os -O binary target/riscv64gc-unknown-none-elf/release/os.bin
+将元数据丢弃得到的内核镜像 os.bin 被加载到 Qemu 之后，则可以在 0x80200000 处正确找到内核第一条指令
+-------------------------------------------------------------------
+我们可以使用 stat 工具来比较内核可执行文件和内核镜像的大小：
+$ stat target/riscv64gc-unknown-none-elf/release/os
+
+$ stat target/riscv64gc-unknown-none-elf/release/os.bin
+-------------------------------------------------------------------
+# 因为没有框架代码也就是rustbi以及bootloader文件夹，所以以下了解就行
+-------------------------------------------------------------------
+在 os 目录下通过以下命令启动 Qemu 并加载 RustSBI 和内核镜像:
+
+$ qemu-system-riscv64 \
+    -machine virt \
+    -nographic \
+    -bios ../bootloader/rustsbi-qemu.bin \
+    -device loader,file=target/riscv64gc-unknown-none-elf/release/os.bin,addr=0x80200000 \
+    -s -S
+
+-s 可以使 Qemu 监听本地 TCP 端口 1234 等待 GDB 客户端连接，而 -S 可以使 Qemu 在收到 GDB 的请求后再开始运行。因此，Qemu 暂时没有任何输出。注意，如果不想通过 GDB 对于 Qemu 进行调试而是直接运行 Qemu 的话，则要删掉最后一行的 -s -S
+
+-------------------------------------------------------------------
+打开另一个终端，启动一个 GDB 客户端连接到 Qemu ：
+$ riscv64-unknown-elf-gdb \
+      -ex 'file target/riscv64gc-unknown-none-elf/release/os' \
+      -ex 'set arch riscv:rv64' \
+      -ex 'target remote localhost:1234'
+
+接下来就是gdb的调试操作知识了，不再扩展
+-------------------------------------------------------------------
+
+-------------------------------------------------------------------
+-------------------------------------------------------------------
+-------------------------------------------------------------------
