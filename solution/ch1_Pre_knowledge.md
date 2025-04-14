@@ -188,6 +188,8 @@ fn panic(_info: &PanicInfo) -> ! {
 $ cargo install cargo-binutils
 $ rustup component add llvm-tools-preview
 -------------------------------------------------------------------
+#从这里之后是旧版本指导书内容
+-------------------------------------------------------------------
 $ file target/riscv64gc-unknown-none-elf/debug/os
 可以查看文件进行分析:
 target/riscv64gc-unknown-none-elf/debug/os: ELF 64-bit LSB executable, UCB RISC-V, RVC, double-float ABI, version 1 (SYSV), statically linked, with debug_info, not stripped
@@ -412,7 +414,8 @@ $ riscv64-unknown-elf-gdb \
 
 接下来就是gdb的调试操作知识了，不再扩展
 -------------------------------------------------------------------
+4.14:
+woc，看错指导书了，之前解决no_main后的内容是2021年的指导书
+以及没用entry.asm
+-------------------------------------------------------------------
 
--------------------------------------------------------------------
--------------------------------------------------------------------
--------------------------------------------------------------------
