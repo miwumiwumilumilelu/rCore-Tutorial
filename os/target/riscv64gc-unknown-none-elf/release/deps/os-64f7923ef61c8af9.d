@@ -10,4 +10,4 @@ src/sbi.rs:
 src/boards/qemu.rs:
 src/entry.asm:
 
-# env-dep:LOG=DEBUG
+# env-dep:LOG=TRACE
