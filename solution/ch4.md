@@ -51,7 +51,7 @@ let ts = user_ptr_to_kernel_ref(current_user_token(), _ts);
 是关键一步,手动实现翻译
 // os/src/mm/page_table.rs
 
-//虚拟地址->虚拟页号->物理页号->物理地址
+//虚拟地址->虚拟页号->物理页号->物理基地址->物理地址
 pub fn user_ptr_to_kernel_ref<T>(token: usize, ptr: *mut T) -> &'static mut T {
     //根据 token 创建一个 PageTable 实例，用于操作用户态的页表
     let page_table = PageTable::from_token(token);
@@ -132,4 +132,91 @@ impl From<PhysPageNum> for PhysAddr {
 }
 
 p.0 += offset;
+
+-------------------------------------------------------------------------
+4.20
+我发现translated_byte_buffer也可以实现用户空间虚拟地址转化为物理地址，使得地址合法内核访问
+
+//虚拟地址->虚拟页号->物理页号->物理基地址->物理地址
+
+/// Translate&Copy a ptr[u8] array with LENGTH len to a mutable u8 Vec through page table
+// 将用户空间的虚拟地址缓冲区转换为内核可访问的物理内存切片集合
+pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
+    // 从token获取用户页表实例，用于地址转换
+    let page_table = PageTable::from_token(token);
+    
+    // 计算用户空间缓冲区的起始和结束地址（虚拟地址）
+    let mut start = ptr as usize;    // 转换为数值类型的起始地址
+    let end = start + len;           // 结束地址 = 起始 + 长度
+    let mut v = Vec::new();          // 存储最终生成的物理内存切片
+    
+    // 逐页处理用户缓冲区，直到覆盖全部长度
+    while start < end {
+        // 将当前起始地址转换为虚拟地址类型
+        let start_va = VirtAddr::from(start);
+        
+        // 获取当前虚拟页号（VPN），例如0x1000对齐
+        let mut vpn = start_va.floor();  // floor() 获取页起始地址对应的VPN
+        
+        // 将虚拟页号翻译为物理页号（PPN）
+        let ppn = page_table.translate(vpn).unwrap().ppn();  // 若无法翻译会panic
+        
+        // 将VPN前进到下一页（例如0x1000 -> 0x2000）
+        vpn.step();  // step() 方法将VPN增加一页大小
+        
+        // 计算当前页的结束地址：
+        // 取下一页起始地址和用户缓冲区的结束地址中较小的值
+        let mut end_va: VirtAddr = vpn.into();        // 转换为虚拟地址
+        end_va = end_va.min(VirtAddr::from(end));     // 确保不超过总长度
+        
+        // 生成当前页的物理内存切片：
+        if end_va.page_offset() == 0 {
+            // 情况1：当前页正好结束在页边界
+            // 切片从start_va的页内偏移到页末尾
+            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..]);
+        } else {
+            // 情况2：当前页结束在中间位置
+            // 切片从start_va的页内偏移到end_va的页内偏移
+            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]);
+        }
+        
+        // 更新start为当前页的结束地址，处理下一页
+        start = end_va.into();
+    }
+    
+    v  // 返回所有物理页切片的集合
+}
+
+缓冲区是为了保证数据读入的合法不会越界和安全，做好了物理页切片的返回也就是实现了跨页处理
+那么对应改写sys_get_time
+
+pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+    trace!("kernel: sys_get_time");
+    let us = get_time_us();
+    let sec = us / 1_000_000;
+    let usec = us % 1_000_000;
+
+    // 翻译用户指针
+    let buffers = translated_byte_buffer(current_user_token(), _ts as *const u8, 16);
+
+    // 将 TimeVal 写入翻译后的缓冲区
+    let timeval = TimeVal { sec, usec };
+    let timeval_bytes = unsafe { core::slice::from_raw_parts((&timeval as *const TimeVal) as *const u8, 16) };
+
+    let mut offset = 0;
+    for buffer in buffers {
+        let len = buffer.len().min(timeval_bytes.len() - offset);
+        buffer[..len].copy_from_slice(&timeval_bytes[offset..offset + len]);
+        offset += len;
+        if offset >= timeval_bytes.len() {
+            break;
+        }
+    }
+    0
+}
+
+-------------------------------------------------------------------------
+## sys_trace
+-------------------------------------------------------------------------
+
 -------------------------------------------------------------------------
