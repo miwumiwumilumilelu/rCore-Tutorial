@@ -218,5 +218,48 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 -------------------------------------------------------------------------
 ## sys_trace
 -------------------------------------------------------------------------
+此外，由于本章我们有了地址空间作为隔离机制，所以 sys_trace 需要考虑一些额外的情况：
+在读取（trace_request 为 0）时，如果对应地址用户不可见或不可读，则返回值应为 -1（isize 格式的 -1，而非 u8）。
+在写入（trace_request 为 1）时，如果对应地址用户不可见或不可写，则返回值应为 -1（isize 格式的 -1，而非 u8）。
 
+在ch3基础上修改
+-------------------------------------------------------------------------
+pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
+    trace!("kernel: sys_trace");
+    let token = current_user_token();
+    match _trace_request {
+        0 => {
+            // id 应被视作 *const u8，读取地址处的值
+            let buffers = translated_byte_buffer(token, _id as *const u8, 1);
+            if let Some(buffer) = buffers.first() {
+                buffer[0] as isize
+            } else {
+                -1 // 地址不可见或不可读
+            }
+        }
+        1 => {
+            // id 应被视作 *mut u8，写入 data 的最低字节
+            let mut buffers = translated_byte_buffer(token, _id as *const u8, 1);
+            if let Some(buffer) = buffers.first_mut() {
+                buffer[0] = (_data & 0xff) as u8;
+                0 // 成功
+            } else {
+                -1 // 地址不可见或不可写
+            }
+        }
+        2 => {
+            // 查询当前任务调用编号为 id 的系统调用次数
+            if _id >= MAX_SYSCALL_NUM {
+                return -1;
+            }
+            let syscall_times = crate::task::get_sys_call_times();
+            syscall_times[_id] as isize
+        }
+        _ => {
+            -1
+        }
+    }
+}
+-------------------------------------------------------------------------
+-------------------------------------------------------------------------
 -------------------------------------------------------------------------
