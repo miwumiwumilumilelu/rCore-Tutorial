@@ -14,7 +14,7 @@ fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize
 // os/src/process.rs
 
 找到sys_trace函数,根据题目的调用规范进行编写match函数，容易得到0,1,_的匹配
-
+```
 // TODO: implement the syscall
 pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
     trace!("kernel: sys_trace");
@@ -56,6 +56,7 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
         }
     }
 }
+```
 
 ------------------------------------------------------------------------------------------------------
 对2的匹配：查询当前任务id对应的系统调用次数
@@ -65,17 +66,19 @@ syscall_time 是一个固定大小的数组（[u32; MAX_SYSCALL_NUM]），其有
 
 MAX_SYSCALL_NUM是我们自己定义的
 所以要在该文件开头加上他的调用
+```
 use crate::{
     task::{exit_current_and_run_next, suspend_current_and_run_next},
     timer::get_time_us,
     config::MAX_SYSCALL_NUM,
 };
-
+```
 定义在os下的config.rs文件中,该文件存放宏定义，且一般都大写
 此处注意要加上注释，因为是被规范了的，否则会报错
+```
 ///
 pub const MAX_SYSCALL_NUM: usize = 500;
-
+```
 syscall_times是定义的一个数组用来接受所调用的task.rs中的get_sys_call_times()函数的返回值，后续会讲
 最后返回对应id的元素即可
 
@@ -86,7 +89,7 @@ syscall_times是定义的一个数组用来接受所调用的task.rs中的get_sy
 ## task/mod.rs
 ------------------------------------------------------------------------------------------------------
 观察本文件的大致代码，可以知道先在最后加上：
-
+```
 /// Increase the sys call count
 pub fn increase_sys_call(sys_id: usize) {
     TASK_MANAGER.increase_sys_call(sys_id);
@@ -96,12 +99,12 @@ pub fn increase_sys_call(sys_id: usize) {
 pub fn get_sys_call_times() -> [u32; MAX_SYSCALL_NUM] {
     TASK_MANAGER.get_sys_call_times()
 }
-
+```
 包装用来全局使用
 
 ------------------------------------------------------------------------------------------------------
 然后在相应结构体对应的方法中加入这两个函数的具体实现：
-
+```
 fn increase_sys_call(&self, sys_id: usize) {
     // 获取对 TaskManagerInner 的可变独占访问
     //同步机制修改确保在访问期间没有其他代码能修改 TaskManagerInner，避免数据竞争
@@ -117,10 +120,10 @@ fn get_sys_call_times(&self) -> [u32; MAX_SYSCALL_NUM] {
     // 返回当前任务的系统调用统计副本
     inner.tasks[inner.current_task].syscall_time.clone()
 }
-
+```
 ------------------------------------------------------------------------------------------------------
 最后创建实例中加入数组的定义，对应上面两个方法的载体:
-
+```
     pub static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
         let mut tasks = [TaskControlBlock {
@@ -128,11 +131,12 @@ fn get_sys_call_times(&self) -> [u32; MAX_SYSCALL_NUM] {
             task_status: TaskStatus::UnInit,
             syscall_time: [0; MAX_SYSCALL_NUM], //对应也需要在开头加上use crate::config::MAX_SYSCALL_NUM
         }; MAX_APP_NUM];
+ ```
 ------------------------------------------------------------------------------------------------------
 ## syscall/mod.rs
 ------------------------------------------------------------------------------------------------------
 此时就可以在每次系统调用的时候进行计数了，也就是+1的操作：
-
+```
 use crate::task::increase_sys_call;
 
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
@@ -146,12 +150,12 @@ pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
     }
 }
-
+```
 ------------------------------------------------------------------------------------------------------
 ## task.rs
 ------------------------------------------------------------------------------------------------------
 在之前的实例化中添加的元素相应的对应到TaskControlBlock结构体的定义中加入一个新元素:
-
+```
 use crate::config::MAX_SYSCALL_NUM;
 
 pub struct TaskControlBlock {
@@ -162,7 +166,7 @@ pub struct TaskControlBlock {
     /// syscall time count,定义为数组
     pub syscall_time: [u32; MAX_SYSCALL_NUM],
 }
-
+```
 ------------------------------------------------------------------------------------------------------
 测试的时候，可以看Makefile文件：
 // user/Makefile
@@ -175,6 +179,7 @@ pub struct TaskControlBlock {
 ------------------------------------------------------------------------------------------------------
 ## 刚进入 __restore 时，sp 代表了什么值。请指出 __restore 的两种使用情景
 ------------------------------------------------------------------------------------------------------
+```
 __restore:
 
  1.macro LOAD_GP n                                                   //宏定义 LOAD_GP​,与SAVE_GP对称
@@ -206,22 +211,25 @@ __restore:
 27    # now sp->kernel stack, sscratch->user stack
 28    csrrw sp, sscratch, sp                                        //切换回用户栈
 29    sret
-
+```
 Trap 处理的总体流程如下：首先通过 __alltraps 将 Trap 上下文保存在内核栈上，然后跳转到使用 Rust 编写的 trap_handler 函数 完成 Trap 分发及处理。当 trap_handler 返回之后，使用 __restore 从保存在内核栈上的 Trap 上下文恢复寄存器。最后通过一条 sret 指令回到应用程序执行
 
 sp指向用户栈的栈顶;
 系统调用返回（syscall 返回用户态）​，需要恢复用户态的执行上下文
 信号处理返回（trap_handler 返回）​,当用户态的信号处理函数执行完毕后，需要恢复被信号中断前的原始上下文
+
 ------------------------------------------------------------------------------------------------------
 ## 这几行汇编代码特殊处理了哪些寄存器？这些寄存器的的值对于进入用户态有何意义？请分别解释
+```
 ld t0, 32*8(sp)
 ld t1, 33*8(sp)
 ld t2, 2*8(sp)
 csrw sstatus, t0
 csrw sepc, t1
 csrw sscratch, t2
-
+```
 ------------------------------------------------------------------------------------------------------
+```
 11    ld t0, 32*8(sp)                                               //加载 sstatus
 12    ld t1, 33*8(sp)                                               //加载 sepc
 13    ld t2, 2*8(sp)                                                //加载用户栈指针（原x2）
@@ -229,8 +237,10 @@ csrw sscratch, t2
 15    csrw sepc, t1                                                 //设置返回地址
 16    csrw sscratch, t2                                             //保存用户栈到 sscratch
 操作系统内核完成异常处理（如系统调用、中断）后，准备返回到用户态时的上下文恢复流程
+```
 ------------------------------------------------------------------------------------------------------
 ## 为何跳过了 x2 和 x4
+```
 ld x1, 1*8(sp)
 ld x3, 3*8(sp)
 .set n, 5
@@ -238,13 +248,15 @@ ld x3, 3*8(sp)
    LOAD_GP %n
    .set n, n+1
 .endr
+```
 ------------------------------------------------------------------------------------------------------
  //跳过 x2（sp）​​：在代码片段之前x2对应的用户栈指针保存到了sscratch寄存器, 不需要从内核栈中进行恢复
  //​跳过 x4（tp）​​：线程指针通常由内核管理，用户程序无需修改
 ------------------------------------------------------------------------------------------------------
 ## 该指令之后，sp 和 sscratch 中的值分别有什么意义
+```
 csrrw sp, sscratch, sp
-
+```
 ------------------------------------------------------------------------------------------------------
 sp->sscratch->sp 两个寄存器值互换
 sp指向用户栈, sscratch指向内核栈
@@ -258,8 +270,9 @@ sret后
 
 ------------------------------------------------------------------------------------------------------
 ## 该指令之后，sp 和 sscratch 中的值分别有什么意义？
+```
 csrrw sp, sscratch, sp
-
+```
 ------------------------------------------------------------------------------------------------------
 寄存器的内容交换, sp保存了内核栈指针, sscratch保存用户栈指针
 
@@ -273,10 +286,10 @@ ecall指令
 将使用的栈切换到用户栈
 在 __alltraps 时我们要求 sscratch 指向内核栈，这个也需要在此时完成
 从 S 特权级切换到 U 特权级
-
+```
 //ecall指令长度为4字节，sepc +=4确保返回到下一条指令,避免死循环
         cx.sepc += 4;
-
+```
 ------------------------------------------------------------------------------------------------------
 # 荣誉准则
 ------------------------------------------------------------------------------------------------------
