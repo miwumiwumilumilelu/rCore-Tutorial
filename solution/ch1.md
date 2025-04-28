@@ -1,6 +1,7 @@
 ----------------------------------------------------------------
 # 回顾：
 ----------------------------------------------------------------
+```
 $ cargo new os
 
 // os/.cargo/config
@@ -22,8 +23,9 @@ fn panic(_info: &PanicInfo) -> ! {
 #![no_main]
 
 mod lang_items;
-
+```
 ---------------------------------------------------------------
+```
 // os/src/main.rs
 
 const SYSCALL_EXIT: usize = 93;
@@ -50,18 +52,24 @@ pub fn sys_exit(xstate: i32) -> isize {
 extern "C" fn _start() {
     sys_exit(9);
 }
+```
 -------------------------------------------------------------------
+```
 //添加了读和退出操作(后续会详细讲解，现在只需要知道调用了sys_exit等函数)
 $ cargo build --target riscv64gc-unknown-none-elf
 $ qemu-riscv64 target/riscv64gc-unknown-none-elf/debug/os; echo $?
+```
 
 ![alt text](image-2.png)
 
 现在就算勉强完成了一个简陋的用户态最小化执行环境
+
 -------------------------------------------------------------------
 # 现在开始实现有显示支持(println)的用户态执行环境
 Rust 的 core 库内建了以一系列帮助实现显示字符的基本 Trait 和数据结构，函数等，我们可以对其中的关键部分进行扩展，就可以实现定制的 println! 功能
+
 -------------------------------------------------------------------
+```
 // os/src/main.rs
 
 #![no_std]
@@ -135,26 +143,33 @@ extern "C" fn _start() {
     println!("Hello, world!");
     sys_exit(9);
 }
+```
 -------------------------------------------------------------------
+```
 $ cargo build --target riscv64gc-unknown-none-elf
 $ qemu-riscv64 target/riscv64gc-unknown-none-elf/debug/os; echo $?
+```
 ![alt text](image-3.png)
 -------------------------------------------------------------------
 ## 构建裸机执行环境
 实现的用户态的最小执行环境，稍加改造，就可以完成裸机上的最小执行环境
 因此我们将把 Hello world! 应用程序从用户态搬到内核态
+
 -------------------------------------------------------------------
 启动 QEMU 软件 qemu-system-riscv64 来模拟 RISC-V 64 计算机的加载内核命令：
+```
 qemu-system-riscv64 \
             -machine virt \
             -nographic \
             -bios $(BOOTLOADER) \
             -device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA)
-
+```
 我直接去ch1中复制bootloader文件夹和sbi.rs到这个项目中的(后面要用)   
+
 -------------------------------------------------------------------
 # 实现关机功能
 -------------------------------------------------------------------
+```
 // os/src/sbi.rs
 fn sbi_call(which: usize, arg0: usize, arg1: usize, arg2: usize) -> usize {
  let mut ret;
@@ -185,8 +200,10 @@ use sbi::shutdown;
 extern "C" fn _start() {
     shutdown();
 }
+```
 -------------------------------------------------------------------
 编译生成ELF格式的执行文件
+```
 $ cargo build --release
  Compiling os v0.1.0 (/media/chyyuu/ca8c7ba6-51b7-41fc-8430-e29e31e5328f/thecode/rust/os_kernel_lab/os)
   Finished release [optimized] target(s) in 0.15s
@@ -196,10 +213,11 @@ $ rust-objcopy --binary-architecture=riscv64 target/riscv64gc-unknown-none-elf/r
 加载运行
 $ qemu-system-riscv64 -machine virt -nographic -bios ../bootloader/rustsbi-qemu.bin -device loader,file=target/riscv64gc-unknown-none-elf/release/os.bin,addr=0x80200000
 无法退出，风扇狂转，感觉碰到死循环!!!
+```
 -------------------------------------------------------------------
 $ rust-readobj -h ./target/riscv64gc-unknown-none-elf/debug/os
 查看ELF 文件头
-'''
+```
 root@manbin:~/works/rCore-Tutorial/os# rust-readobj -h ./target/riscv64gc-unknown-none-elf/debug/os
 
 File: ./target/riscv64gc-unknown-none-elf/debug/os
@@ -234,10 +252,11 @@ ElfHeader {
   SectionHeaderCount: 18
   StringTableSectionIndex: 16
 }
-'''
+```
 -------------------------------------------------------------------
 设置正确的程序内存布局:
 修改 Cargo 的配置文件来使用我们自己的链接脚本 os/src/linker.ld：
+```
 // os/.cargo/config
 [build]
 target = "riscv64gc-unknown-none-elf"
@@ -296,9 +315,11 @@ SECTIONS
         *(.eh_frame)
     }
 }
+```
 -------------------------------------------------------------------
 正确配置栈空间布局:
 用另一段汇编代码初始化栈空间：
+```
 // os/src/entry.asm
 
     .section .text.entry
@@ -313,15 +334,17 @@ boot_stack:
     .space 4096 * 16
     .globl boot_stack_top
 boot_stack_top:
-
+```
 注意这里和ch1的entry.asm不同在于栈底标识名
 我们预留了一块大小为 4096 * 16 字节，也就是64kb的空间， 用作操作系统的栈空间
 栈顶地址被全局符号 boot_stack_top 标识，栈底则被全局符号 boot_stack 标识
 同时，这块栈空间被命名为 .bss.stack ，链接脚本里有它的位置
 la sp, boot_stack_top 作为 OS 的第一条指令， 将 sp 设置为栈空间的栈顶
 第二条指令则是函数调用 rust_main ，这里的 rust_main 是我们稍后自己编写的应用入口
+
 -------------------------------------------------------------------
 新增以下代码(或者可以说是修改掉_start)
+```
 // os/src/main.rs
 //我们使用 global_asm 宏，将同目录下的汇编文件 entry.asm 嵌入到代码中
 
@@ -331,11 +354,13 @@ la sp, boot_stack_top 作为 OS 的第一条指令， 将 sp 设置为栈空间�
 pub fn rust_main() -> ! {
     shutdown();
 }
-
+```
 在 main.rs 中嵌入这些汇编代码并声明应用入口 rust_main
+
 -------------------------------------------------------------------
 再复习一次：编译，生成，运行
 编译生成ELF格式的执行文件
+```
 $ cargo build --release
  Compiling os v0.1.0 (/media/chyyuu/ca8c7ba6-51b7-41fc-8430-e29e31e5328f/thecode/rust/os_kernel_lab/os)
   Finished release [optimized] target(s) in 0.15s
@@ -344,15 +369,17 @@ $ rust-objcopy --binary-architecture=riscv64 target/riscv64gc-unknown-none-elf/r
 
 加载运行
 $ qemu-system-riscv64 -machine virt -nographic -bios ../bootloader/rustsbi-qemu.bin -device loader,file=target/riscv64gc-unknown-none-elf/release/os.bin,addr=0x80200000
+```
 -------------------------------------------------------------------
 ![alt text](image-4.png)
 
 优雅不过如此，完美退出，没有卡死
+
 -------------------------------------------------------------------
 清空 .bss 段:
 与内存相关的部分太容易出错了， 清零 .bss 段 的工作我们还没有完成:
 新增clear_bss和修改
-
+```
  // os/src/main.rs
 fn clear_bss() {
     unsafe extern "C" {
@@ -368,12 +395,14 @@ pub fn rust_main() -> ! {
     clear_bss();
     shutdown();
 }
-
+```
 链接脚本 linker.ld 中给出的全局符号 sbss 和 ebss 让我们能轻松确定 .bss 段的位置
+
 -------------------------------------------------------------------
 添加裸机打印相关函数:
 目前已经为用户态程序实现的 println 宏，略作修改即可用于内核态操作系统
 创建os/src/console.rs,将main中宏定义部分修改进去
+```
 // os/src/console.rs
 
 //! SBI console driver, for text output
@@ -485,16 +514,19 @@ pub fn init() {
         _ => LevelFilter::Off,
     });
 }
-
+```
 -------------------------------------------------------------------
 在 cargo 项目中引入外部库 log，需要修改 Cargo.toml 加入相应的依赖信息
+```
 // os/Cargo.toml
 
 [dependencies]
 log = "0.4"
 [profile.release]
 debug = true
+```
 -------------------------------------------------------------------
+```
 // #![no_std]
 // #![no_main]
 // mod lang_items;
@@ -671,14 +703,15 @@ pub fn rust_main() -> ! {
     crate::board::QEMU_EXIT_HANDLE.exit_success(); // CI autotest success
                                                    //crate::board::QEMU_EXIT_HANDLE.exit_failure(); // CI autoest failed
 }
+```
 -------------------------------------------------------------------
 复制Makefile文件到本项目中
 删去main中的#![feature(panic_info_message)]
 删去lang_items的unwrap避免报错
-
+```
 $ LOG=DEBUG make run
 or
 $ make run LOG=TRACE
-
+```
 ![alt text](image-5.png)
 -------------------------------------------------------------------

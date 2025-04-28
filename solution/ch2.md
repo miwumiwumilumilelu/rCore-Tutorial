@@ -1,4 +1,5 @@
 ------------------------------------------------------------------------------------------------------------------------------
+
 ── os
 │   ├── Cargo.toml
 │   ├── Makefile (修改：构建内核之前先构建应用)
@@ -36,11 +37,14 @@
       ├── linker.ld(应用的链接脚本)
       └── syscall.rs(包含 syscall 方法生成实际用于系统调用的汇编指令，
                      各个具体的 syscall 都是通过 syscall 来实现的)
+                     
 ------------------------------------------------------------------------------------------------------------------------------
+```
 $ git clone https://github.com/LearningOS/rCore-Tutorial-Code-2025S.git
 $ cd rCore-Tutorial-Code-2025S
 $ git checkout ch2
 $ git clone https://github.com/LearningOS/rCore-Tutorial-Test-2025S.git user
+```
 
 ch2引入用户程序。为了将内核与应用解耦，于是将二者分成了两个仓库
 user/src/bin/*.rs: 各个应用程序
