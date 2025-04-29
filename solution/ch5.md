@@ -181,7 +181,37 @@ MemorySet方法中添加:
 ```
 
 -------------------------------------------------------------------------
-## sys_spawn
+## sys_spawn定义
 -------------------------------------------------------------------------
+获取当前任务的虚拟地址以使得内核访问用户空间任务数据
 
+功能： 新建子进程，使其执行目标程序
+```
+/// YOUR JOB: Implement spawn.
+/// HINT: fork + exec =/= spawn
+pub fn sys_spawn(_path: *const u8) -> isize {
+    trace!(
+        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        current_task().unwrap().pid.0
+    );
+    /*  
+    功能：新建子进程，使其执行目标程序。
+    说明：成功返回子进程id，否则返回 -1。
+    */
+    let token = current_user_token();
+    // 将物理地址空间字符串映射成虚拟地址
+    let path = translated_str(token, _path);
+    // 根据路径获取应用程序数据
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let task = current_task().unwrap();
+        // 创建一个新任务
+        let ttask = task.spawn(data);
+        let ppid = ttask.pid.0;
+        add_task(ttask);
+        ppid as isize
+    } else {
+        -1
+    }
+}
+```
 -------------------------------------------------------------------------
